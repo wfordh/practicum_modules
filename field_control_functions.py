@@ -11,7 +11,7 @@ from scipy.stats import percentileofscore
 
 #in_notebook = False
 #if in_notebook == True:
-#	from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
+from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
 #	init_notebook_mode(connected=True)
 #	pd.options.display.max_rows = 150
 #	%matplotlib inline
@@ -123,13 +123,16 @@ def fc_score_prep(game_df):
 	calculation of field control scores on the resulting dataframes.
 	"""
 	game_dfc = game_df.copy()
-	t1_score, t2_score = field_control_score(game_dfc)
-	filtered_game = game_dfc.query('game_state != "Game Effectively Over"').copy()
-	t1_score_filtered, t2_score_filtered = field_control_score(filtered_game)
-	return t1_score, t2_score, t1_score_filtered, t2_score_filtered
+	t1_score, t2_score = fc_score_compute(game_dfc)
+	#t1_score = fc_score_compute(game_dfc)
+	filtered_game = game_dfc.query('game_state != "Game Effectively Over"').copy().reset_index(drop=True)
+	t1_score_filtered, t2_score_filtered = fc_score_compute(filtered_game)
+	#t1_score_filtered = fc_score_compute(filtered_game)
+	return t1_score, t1_score_filtered, t2_score, t2_score_filtered
+	#return t1_score, t1_score_filtered
 
 
-def field_control_score(game_df):
+def fc_score_compute(game_df):
 	### change to fc_score_compute()?
 	### return both with and without garbage scores or have an optional argument 
 	### for garbage time inclusion and call function twice where necessary?
@@ -156,6 +159,7 @@ def field_control_score(game_df):
 	t1_score = round(game_df.t1_area.sum()/total_fc, 3)
 	t2_score = round(game_df.t2_area.sum()/total_fc, 3)
 	return t1_score, t2_score
+	#return t1_score
 
 
 def calc_time_of_poss(game_df):
@@ -172,7 +176,7 @@ def calc_time_of_poss(game_df):
 				offteam_top += (game_df.loc[idx+1, 'time_in_reg'] - row.time_in_reg)
 	return offteam_top
 
-def plot_field_control(game_df, fc_score):
+def plot_field_control(game_df, fc_scores, adjusted = False):
 	"""
 	Stacked area plots showing field position on the y-axis and time in 
 	regulation on the x-axis. Additionally includes vertical lines for 
@@ -246,22 +250,35 @@ def plot_field_control(game_df, fc_score):
 		type = 'linear'
 	)
 
-	layout = go.Layout(
-		title = "<b>" + game_df.loc[0, 'offteam'] + " vs " + \
-			game_df.loc[0, 'defteam'] + " Field Control Plot </b><br>" + \
-			team_one + " FC Score: " + str(round(fc_score, 3)) + "<br>" + team_two + " FC Score: " + \
-			str(round(1-fc_score,3)),
-		xaxis = xaxis,
-		yaxis = yaxis, 
-		shapes = scoring_lines,
-		showlegend = True
-	)
+	if adjusted: 
+		layout = go.Layout(
+			title = "<b>" + game_df.loc[0, 'offteam'] + " vs " + \
+				game_df.loc[0, 'defteam'] + " Field Control Plot </b><br>" + \
+				team_one + " FC Score: " + str(fc_scores[0]) + "   Adj FC Score: " + \
+				str(fc_scores[1]) + "<br>" + team_two + " FC Score: " + \
+				str(fc_scores[2]) + "   Adj FC Score: " + str(fc_scores[3]),
+			xaxis = xaxis,
+			yaxis = yaxis, 
+			shapes = scoring_lines,
+			showlegend = True
+		)
+	else:
+		layout = go.Layout(
+			title = "<b>" + game_df.loc[0, 'offteam'] + " vs " + \
+				game_df.loc[0, 'defteam'] + " Field Control Plot </b><br>" + \
+				team_one + " FC Score: " + str(fc_scores[0]) + "<br>" + team_two + " FC Score: " + \
+				str(fc_scores[2]),
+			xaxis = xaxis,
+			yaxis = yaxis, 
+			shapes = scoring_lines,
+			showlegend = True
+		)
 	fig = go.Figure(data=data, layout=layout)
 	iplot(fig, filename='stacked-area-plot')
 	return
 
 
-def field_control_pipeline(df, game_num, plot=True):
+def field_control_pipeline(df, game_num, plot=True, adjusted=False):
 	"""
 	Pipeline taking in the season long data and a game number and performing 
 	all of the relevant transformations and operations before plotting it. 
@@ -269,11 +286,11 @@ def field_control_pipeline(df, game_num, plot=True):
 	dfc = df.copy()
 	game_df = get_game(dfc, game_num)
 	
-	fc_score = field_control_score(game_df=game_df)
+	fc_scores = fc_score_prep(game_df=game_df)
 	game_df = game_df.sort_values(by = 'time_in_reg').reset_index(drop = True)
 
 	if plot:
-		plot_field_control(game_df, fc_score)
+		plot_field_control(game_df, fc_scores, adjusted)
 	return 
 
 
@@ -298,58 +315,64 @@ def get_fc_scores_season(df):
 			other_score_diff = game_df.score_differential.iloc[-1]
 			main_score_diff = -other_score_diff
 		#game_df = game_df.apply(flip_fp, axis = 1, args = (main_team, ))
-		fc_score = field_control_score(game_df=game_df)
+		fc_scores = fc_score_prep(game_df=game_df)
 		main_top = calc_time_of_poss(game_df)
 		main_avg_fp, other_avg_fp = get_mean_field_position(game_df)
-		all_fc_scores[game_num] = [main_team, fc_score, main_score_diff, main_top,
-								   main_avg_fp, other_team, 1-fc_score, other_score_diff,
+		all_fc_scores[game_num] = [main_team, fc_scores[0], fc_scores[1], main_score_diff, main_top,
+								   main_avg_fp, other_team, fc_scores[2], fc_scores[3], other_score_diff,
 								  3600 - main_top, other_avg_fp]
 		
 	fc_scores_df = pd.DataFrame.from_dict(all_fc_scores, orient = 'index').reset_index()
-	fc_scores_df.columns = ['game_num', 'team_1', 'fc_team_1', 'team_1_score_diff',
-							'team_1_top', 'team_1_avg_start_fp', 'team_2', 'fc_team_2',
-							'team_2_score_diff', 'team_2_top', 'team_2_avg_start_fp']
+	new_fc_cols = ['game_num', 'team_1', 'team_1_fc', 'team_1_fc_adj', 'team_1_score_diff',
+		'team_1_top', 'team_1_avg_start_fp', 'team_2', 'team_2_fc', 'team_2_fc_adj',
+		'team_2_score_diff', 'team_2_top', 'team_2_avg_start_fp']
 
-	season_fc_df = pd.concat([fc_scores_df[['game_num', 'team_1', 'fc_team_1', 
-											'team_1_score_diff', 'team_1_top',
-										   'team_1_avg_start_fp']], 
-		   fc_scores_df[['game_num', 'team_2', 'fc_team_2', 
-						 'team_2_score_diff', 'team_2_top',
-						'team_2_avg_start_fp']].\
-				   rename(columns = {'team_2': 'team_1', 'fc_team_2':'fc_team_1',
-									'team_2_score_diff': 'team_1_score_diff',
-									'team_2_top': 'team_1_top', 
-									'team_2_avg_start_fp':'team_1_avg_start_fp'})]).\
-			sort_values(by = 'game_num').reset_index(drop = True)
+	fc_scores_df.columns = new_fc_cols
+
+	team_1_cols = ['game_num', 'team_1', 'team_1_fc', 'team_1_fc_adj',
+		'team_1_score_diff', 'team_1_top', 'team_1_avg_start_fp']
+	team_2_cols = ['game_num', 'team_2', 'team_2_fc', 'team_2_fc_adj',
+		'team_2_score_diff', 'team_2_top', 'team_2_avg_start_fp']
+
+	season_fc_df = pd.concat([fc_scores_df[team_1_cols], 
+		   	fc_scores_df[team_2_cols].rename(columns = {'team_2': 'team_1',
+		   		'team_2_fc':'team_1_fc', 'team_2_fc_adj':'team_1_fc_adj',
+		   		'team_2_score_diff': 'team_1_score_diff', 'team_2_top': 'team_1_top',
+				'team_2_avg_start_fp':'team_1_avg_start_fp'})]).sort_values(by = 'game_num').reset_index(drop = True)
 	
 	return season_fc_df
 
 
-def fc_vs_score_scatter(df, game_num = None):
+def fc_vs_score_scatter(df, game_num = None, adjusted = False):
 	"""
 	Plots scatter graph of all games in the dataframe.
 	Dataframe coming in should have game number, team, field control score,
 	and score differential.
 	Isolates one game and highlights it among all games,
 	if a game is specified.
+	:df: meant to be the season_fc_df generated by get_fc_scores_season()
 	"""
-	
+	dfc = df.copy()
+	if adjusted:
+		dfc = dfc.drop('team_1_fc', axis = 1).rename(columns = {'team_1_fc_adj': 'team_1_fc'})
+
+
 	trace_all = go.Scatter(
-		x = df.fc_team_1,
-		y = df.team_1_score_diff,
+		x = dfc.team_1_fc,
+		y = dfc.team_1_score_diff,
 		mode = 'markers',
 		marker = {'opacity': 0.3, 'color': 'rgb(67,147,195)'},
 		text = [row.team_1 + '<br>' + str(row.game_num) 
-				for _, row in df.iterrows()]
+				for _, row in dfc.iterrows()]
 	)
 	
 	if game_num is not None:
-		game_df = df.loc[df.game_num == game_num].reset_index(drop = True)
+		game_df = dfc.loc[dfc.game_num == game_num].reset_index(drop = True)
 		team_one = game_df.loc[0, 'team_1']
 		team_two = game_df.loc[1, 'team_1']
 
 		trace_single = go.Scatter(
-			x = game_df.fc_team_1,
+			x = game_df.team_1_fc,
 			y = game_df.team_1_score_diff,
 			mode = 'markers',
 			marker = {'color': 'rgb(178,24,43)', 'size': 12},
@@ -371,11 +394,27 @@ def fc_vs_score_scatter(df, game_num = None):
 		type = 'linear'
 	)
 	
-	if game_num is not None:
+	if game_num is not None and adjusted:
+		layout = go.Layout(
+			title = "<b>Adj Field Control Score vs Score Differential</b><br>" + \
+				team_one + " vs. " + \
+				team_two,
+			xaxis = xaxis,
+			yaxis = yaxis, 
+			showlegend = False
+		)
+	elif game_num is not None and not adjusted:
 		layout = go.Layout(
 			title = "<b>Field Control Score vs Score Differential</b><br>" + \
 				team_one + " vs. " + \
 				team_two,
+			xaxis = xaxis,
+			yaxis = yaxis, 
+			showlegend = False
+		)
+	elif game_num is None and adjusted:
+		layout = go.Layout(
+			title = "<b>Adj Field Control Score vs Score Differential</b>",
 			xaxis = xaxis,
 			yaxis = yaxis, 
 			showlegend = False
@@ -398,7 +437,7 @@ def fc_vs_score_scatter(df, game_num = None):
 # FC Score --> Field Control Score
 
 
-def fc_score_distplot(df, game_num = None, games = 'all'):
+def fc_score_distplot(df, game_num = None, games = 'all', adjusted = False):
 	"""
 	This function takes in the season long data for each game, plots the distribution
 	of field control scores, and then highlights the scores for the specified game, if 
@@ -414,16 +453,25 @@ def fc_score_distplot(df, game_num = None, games = 'all'):
 	elif games == 'losses':
 		df = df.loc[df.team_1_score_diff < 0]
 	else:
-		df = df        
+		df = df
 
-	g = sns.distplot(df.fc_team_1, color = '#92c5de')
+	if adjusted:
+		df = df.drop('team_1_fc', axis = 1).rename(columns = {'team_1_fc_adj':'team_1_fc'})  
+
+	g = sns.distplot(df.team_1_fc, color = '#92c5de')
 	g.set_xlim(0.25, 0.75)
 	g.set_xlabel('Field Control Score')
 	g.set_yticks([])
-	if games == 'wins':
+	if games == 'wins' and adjusted:
+		g.set_title('Distribution of Adj Field Control Scores - Wins')
+	elif games == 'wins' and not adjusted:
 		g.set_title('Distribution of Field Control Scores - Wins')
-	elif games == 'losses':
+	elif games == 'losses' and adjusted:
+		g.set_title('Distribution of Adj Field Control Scores - Losses')
+	elif games == 'losses' and not adjusted:
 		g.set_title('Distribution of Field Control Scores - Losses')
+	elif games == 'all' and adjusted:
+		g.set_title('Distribution of Adj Field Control Scores')
 	else:
 		g.set_title('Distribution of Field Control Scores')
 	
@@ -431,10 +479,10 @@ def fc_score_distplot(df, game_num = None, games = 'all'):
 		game_df = df.loc[df.game_num == game_num].reset_index(drop = True)
 		team_one = game_df.loc[0, 'team_1']
 		team_two = game_df.loc[1, 'team_1']
-		fc_one = game_df.loc[game_df.team_1 == team_one].fc_team_1.values[0]
-		fc_two = game_df.loc[game_df.team_1 == team_two].fc_team_1.values[0]
-		fc_one_pctile = round(percentileofscore(df.fc_team_1, fc_one), 1)
-		fc_two_pctile = round(percentileofscore(df.fc_team_1, fc_two), 1)
+		fc_one = game_df.loc[game_df.team_1 == team_one].team_1_fc.values[0]
+		fc_two = game_df.loc[game_df.team_1 == team_two].team_1_fc.values[0]
+		fc_one_pctile = round(percentileofscore(df.team_1_fc, fc_one), 1)
+		fc_two_pctile = round(percentileofscore(df.team_1_fc, fc_two), 1)
 		g.vlines(x = fc_one, ymin = 0, 
 				 ymax = 10, color = '#b2182b', label = team_one)
 		g.vlines(x = fc_two, ymin = 0, 
@@ -491,9 +539,11 @@ def fc_game_data_json(game_df):
 	meta['date'] = game_df.loc[0, 'date']
 	meta['team1'] = team1
 	meta['team2'] = team2
-	fc_game_score = fcf.field_control_score(game_df)
-	meta['t1_fc'] = fc_game_score
-	meta['t2_fc'] = 1 - fc_game_score
+	fc_game_scores = fc_score_prep(game_df)
+	meta['t1_fc'] = fc_game_scores[0]
+	meta['t2_fc'] = fc_game_scores[1]
+	meta['t1_fc_adj'] = fc_game_scores[2]
+	meta['t2_fc_adj'] = fc_game_scores[3]
 	
 	drives_grouped = game_df.groupby(['drive', 'offteam'])
 	drives_list = list()
@@ -534,11 +584,11 @@ def fc_all_games_json(df):
 	all_games_metadata = list()
 	
 	for game_num in all_games:
-		dft = fcf.get_game(dfc, game_num)
+		dft = get_game(dfc, game_num)
 #         print(dft.head())
 #         dft = dfc.query('gsis_game_id == @game_num').sort_values(by = 'time_in_reg').reset_index(drop = True)
 #         all_games_metadata[game_num] = fc_game_data_json(dft)
-		all_games_metadata.append(blah(dft))
+		all_games_metadata.append(fc_game_data_json(dft))
 	
 	return all_games_metadata
 
